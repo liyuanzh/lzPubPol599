@@ -1,0 +1,507 @@
+---
+title: "PubPol 599 Homework - R"
+author: "Liyuan Zhang"
+date: "2/1/2017"
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<br>
+
+***
+
+## SESSION I: Data Structures
+There is a dataset "cities.xls" and the homework asks to get insights by making queries.
+<br><br>
+*First*, import the dataset and have a glimpse at the data structure:
+
+```{r HW1import, eval=FALSE}
+library(readxl)
+cities <- read_excel(fileExcel,1)
+```
+
+```{r HW1import2, echo=FALSE}
+library(readxl)
+folderName <- '/Users/liyuanzhang/Google Drive/17Q0_PubPol599C'
+fileName <- '1.cities.xlsx'
+fileExcel <- file.path(folderName,fileName)
+cities <- read_excel(fileExcel,1)
+```
+
+```{r HW1str}
+str(cities, width = 70, strict.width='cut')
+head(cities)
+```
+
+<br>
+We get a pretty good understanding of what variables the dataset has and how many observations there are.
+
+<br>
+*Now*, it is possible to answer the homework questions about the "cities" dataset.
+
+<br>
+**I-1. What was the most visited city in 2015?**
+```{r HW1-1}
+cities[which.max(cities$visits2015),]
+cities[which.max(cities$visits2015),]$city
+```
+
+<br>
+**I-2. What was the least visited city in Asia in 2013?**  
+Since NAs exist in the data set, r will regard NA as the minimum value. To get the real least value, we can either remove the NAs before making the query or add an argument to ask r ignore NAs when processing.
+
+```{r HW1-2}
+# No action on NAs
+cities[cities$region == 'Asia',][which.min(cities$visits2013),]$city
+
+# Method1: Remove NAs in the dataset
+cities1 <- na.omit(cities)
+cities1[cities1$region == 'Asia',][which.min(cities1$visits2013),]$city
+
+# Method2: Add an argument to remove NAs while processing
+asian <- cities[cities$region == 'Asia',]
+cities[which(cities$visits2013 == min(asian$visits2013, na.rm = TRUE)),]$city
+```
+
+<br>
+**I-3. What are the three least visited cities in Asia in 2015?**
+
+```{r}
+asian[order(asian$visits2015)[1:3],]$city
+```
+
+<br>
+**I-4. What are the most and least visited city in Asia in 2013?**
+```{r}
+# Most Visited
+asian[which.max(asian$visits2013),]$city
+
+# Least Visited
+asian[which.min(asian$visits2013),]$city
+```
+<br>
+
+***
+
+## SESSION II: Control of Execution
+**II-1. Redo the first two questions in the homework of session 1 using if and for (and related functions).**  
+
+*REDO I-1. What was the most visited city in 2015?*
+
+```{r}
+max15 <- 0
+max15p <- c()
+
+for (position in 1:nrow(cities)){
+  if (is.na(cities[position, 'visits2015']) == TRUE){
+    next
+  } else if (max15 < cities[position, 'visits2015']){
+    max15 <- cities[position, 'visits2015']
+    max15p <- c(position)
+  } else if (max15 == cities[position, 'visits2015']) {
+    max15p <- c(max15p, position)
+  }
+}
+```
+
+<br>
+Check out the most visited city and the number of visits:
+
+```{r}
+cities[max15p, c('city', 'visits2015')]
+```
+
+<br>
+*REDO I-2. What was the least visited city in Asia in 2013?*
+
+```{r}
+min13 <- 1e12
+min13p <- c()
+
+for (position in 1:nrow(cities)){
+  if (cities[position, 'region'] != 'Asia' ||
+      is.na(cities[position, 'visits2013']) == TRUE){
+    next
+  } else if (min13 > cities[position, 'visits2013']){
+    min13 <- cities[position, 'visits2013']
+    min13p <- c(position)
+  } else if (min13 == cities[position, 'visits2013']) {
+    min13p <- c(min13p, position)
+  }
+}
+```
+
+<br>
+Check out the result:
+
+```{r}
+cities[min13p, c('city', 'visits2013')]
+```
+
+<br>
+**II-2. Redo the third question in the homework of session 1 using if and for (and related functions).**  
+
+*REDO I-3. What are the three least visited cities in Asia in 2015?*
+
+```{r}
+cities1 <- cities
+
+min15n <- c()
+min15cities <- c()
+
+for (n in 1:3){
+  min15 <- 1e12
+  min15P <- c()
+  
+  for (position in 1:nrow(cities1)){
+    if (cities1[position, 'region'] != 'Asia' ||
+        is.na(cities1[position, 'visits2015']) == TRUE){
+      next
+    } else if (min15 > cities1[position, 'visits2015']){
+      min15 <- cities1[position, 'visits2015']
+      min15P <- c(position)
+    } else if (min15 == cities1[position, 'visits2015']) {
+      min15P <- c(min15P, position)
+    }
+  }
+  
+  min15n <- c(min15n, min15)
+  min15cities <- c(min15cities, cities1[min15P, 'city'])
+  cities1 <- cities1[-min15P,]
+}
+```
+
+<br>
+The three least visited cities and their values are stored in `min15cities` and `min15n` respectively, yielding the results as:
+
+```{r HW2-1}
+cbind("city" = min15cities, "visits2015" = min15n)
+```
+
+<br>
+
+***
+
+## SESSION III: Building Functions
+**III-1. Change the function below to create the function `riseToPowerPlus`, which gives a good answer even when the power is negative.**
+
+The original function:
+
+```{r}
+riseToPower=function(base,exponent=2){
+  #####
+  result=1
+  if (exponent > 0){
+    for (time in 1:exponent){
+      result=result*base
+    }
+  }
+  #####
+  return(result)
+}
+```
+
+<br>
+The improved one:
+
+```{r}
+riseToPowerPlus <- function(base, exponent = 2){
+  result <- 1
+  if (exponent > 0){
+    for (time in 1:exponent){
+      result <- result * base
+    }
+  } 
+  else{
+    for (time in 1:abs(exponent)){
+      result <- result * base
+    }
+    result <- 1 / result
+  }
+  return(result)
+}
+```
+
+<br>
+Give a test:
+
+```{r riseToPowerPlus}
+riseToPowerPlus(2, -3)
+```
+
+<br>
+**III-2. Play with the `factor` function**  
+
+Have a look at the function:
+
+```{r}
+factors <- function(number){
+  vectorOfAnswers <- c()
+  
+  for (i in 1:number){
+    if ((number %% i) == 0){ 
+      vectorOfAnswers <- c(vectorOfAnswers,i)
+    }
+  }
+  
+  return (vectorOfAnswers)
+}
+```
+
+```{r}
+# Testing
+factors(20)
+```
+
+<br>
+*III-2-1. Change the function ‘factors’ to reduce the amount of iterations in the for loop and still get the factors shown above.*
+
+```{r}
+factors1 <- function(number){
+  vectorOfAnswers <- c()
+  
+  for (i in 1:abs(number)){
+    if ((number %% i) == 0){ 
+      vectorOfAnswers <- c(vectorOfAnswers,i)
+    }
+  }
+  
+  vectorOfAnswers <- c(vectorOfAnswers, number / vectorOfAnswers)
+  return (sort(unique(vectorOfAnswers)))
+}
+```
+
+```{r}
+# Testing
+factors1(20)
+```
+
+<br>
+*III-2-2. Change your new function ‘factors’ to avoid negative values or zeros as input; your code should return a message if an invalid valid was input.*
+
+```{r}
+factors2 <- function(num){
+  tryCatch(
+    if (num <= 0){
+      break
+    } else {
+      vectorOfAnswers <- c()
+  
+      for (i in 1:abs(number)){
+      if ((number %% i) == 0){ 
+      vectorOfAnswers <- c(vectorOfAnswers,i)
+    }
+  }
+  
+  vectorOfAnswers <- c(vectorOfAnswers, number / vectorOfAnswers)
+  return (sort(unique(vectorOfAnswers)))
+},
+  error = function(e) {print(paste(num,"is NOT a valid input!"))} 
+  )
+}
+```
+
+```{r}
+# Testing
+factors2(-2)
+```
+
+<br>
+*III-2-3. Change your newest function ‘factors’ to accept only positive integer values; your code should return a message if an invalid valid was input.*
+
+```{r}
+factors3 <- function(num){
+  tryCatch(
+    if (num <= 0 || num %% 1 != 0){
+      break
+    } else {
+      vectorOfAnswers <- c()
+  
+      for (i in 1:abs(number)){
+      if ((number %% i) == 0){ 
+      vectorOfAnswers <- c(vectorOfAnswers,i)
+    }
+  }
+  
+  vectorOfAnswers <- c(vectorOfAnswers, number / vectorOfAnswers)
+  return (sort(unique(vectorOfAnswers)))
+},
+  error = function(e) {print(paste(num,"is NOT a valid input!"))} 
+  )
+}
+```
+
+```{r}
+# Testing
+factors3(1.3)
+```
+
+<br>
+**III-3. Make a function that reads two vectors and returns a data frame with those vectors and extra columns with their sum, difference, multiplication and division.**
+
+```{r hw3-3}
+calDF <- function(vec1, vec2){
+  sumv <- difv <- multiv <- divv <- c()
+  for (pos in 1:length(vec1)){
+    sum <- vec1[pos] + vec2[pos]
+    sumv <- c(sumv, sum)
+    dif <- vec1[pos] - vec2[pos]
+    difv <- c(difv, dif)
+    multi <- vec1[pos] * vec2[pos]
+    multiv <- c(multiv, multi)
+    div <- vec1[pos] + vec2[pos]
+    divv <- c(divv, div)
+  }
+  answerAsDF = data.frame(number1 = vec1, number2 = vec2,
+                          Sum = sumv, Difference = difv,
+                          Multiplication = multiv,
+                          Division = div)
+  answerAsDF
+}
+
+```
+
+```{r hw3-3t}
+# Testing
+x <- factors(10)
+y <- x * 2
+calDF(x, y)
+```
+
+<br>
+**III-4. Applying function `strangerF` to composite structures.**
+
+*III-4-1. Understand what this function is doing:*
+
+Function `strangerF` will take a series of numbers (vector/data.frame) and return one number as the result.
+```{r}
+strangerF <- function(x){
+  answer <- 0
+  change <- T
+  for (value in x){
+    if (change){
+      answer <- answer + value
+    }else{
+      answer <- answer - value
+    }
+    change =! change 
+  }
+  return (answer)
+}
+```
+
+<br>
+*III-4-2. Use the function above with the the file ‘dataforstrangeF.csv’, find out which way of “applying the function”" works, that is, report whether you can apply the function directly to the data frame, to a subset of a data frame, to a column, or to a cell, and whether apply, mapply, Map, Filter, lapply work with the function or not in the data set given.*
+
+Import the data and save it in hwdf. Have a look at the data:
+```{r echo = FALSE}
+folderName <- '/Users/liyuanzhang/Google Drive/17Q0_PubPol599C'
+fileName <- '1.dataforstrangeF.csv'
+hwdf <- read.csv(file.path(folderName, fileName))
+```
+
+```{r}
+str(hwdf)
+```
+
+<br>
+Apply `strangerF` to different data structures:  
+1) Direct apply
+```{r eval = FALSE}
+strangerF(hwdf) # by rows
+  # Warning: In Ops.factor(answer, value) : ‘+’ not meaningful for factors
+```
+
+```{r}
+strangerF(hwdf[,2:3]) # by rows
+strangerF(hwdf$vals2) # by columns
+```
+
+<br>
+2) lapply: loop by column, return a list
+
+```{r}
+lapply(hwdf[,2:3], strangerF)
+
+# A more organized way to show output
+as.data.frame(lapply(hwdf[,2:3], strangerF))
+
+lapply(hwdf$vals2, strangerF)
+```
+
+<br>
+3) Map
+
+```{r eval = FALSE}
+Map(strangerF, hwdf)
+  # Error in answer + value : non-numeric argument to binary operator
+```
+
+```{r}
+Map(strangerF, hwdf[,2:3]) # by columns
+Map(strangerF, hwdf$vals2) # loop through every element of the vector
+```
+
+<br>
+4) sapply: return vectors
+
+```{r}
+sapply(hwdf[,2:3], strangerF)
+as.data.frame(sapply(hwdf[,2:3], strangerF))
+sapply(hwdf$vals2, strangerF)
+```
+
+<br>
+5) mapply: return vectors
+```{r eval = FALSE}
+mapply(strangerF, hwdf)
+  # Error in answer + value : non-numeric argument to binary operator
+```
+
+```{r}
+mapply(strangerF, hwdf[,2:3]) # by columns
+mapply(strangerF, hwdf$vals2) # loop through every element of the vector
+```
+
+<br>
+6) apply: can only take an array as the argument
+
+```{r eval = FALSE}
+apply(hwdf, 1, strangerF)
+apply(hwdf, 2, strangerF)
+  # Error in answer + value : non-numeric argument to binary operator
+
+apply(hwdf$vals2, 1, strangerF)
+  # Error: dim(X) must have a positive length
+```
+
+```{r}
+apply(hwdf[,2:3], 1, strangerF) # by rows
+apply(hwdf[,2:3], 2, strangerF) # by columns
+```
+
+<br>
+7) Filter: loop through every element (the smallest unit)
+
+```{r eval = FALSE}
+Filter(strangerF, hwdf)
+  # Error in answer + value : non-numeric argument to binary operator
+```
+
+```{r}
+# Filter(strangerF, hwdf)
+Filter(strangerF, hwdf[,2:3])
+Filter(strangerF, hwdf$vals2)
+```
+
+<br><br><br>
+
+***
+
