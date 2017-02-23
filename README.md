@@ -1,2 +1,2 @@
 # lzPubPol599
-Homework &amp; Project
+Homework &amp; Projects of PubPol 599: Computational Thinking for Governance Analytics
