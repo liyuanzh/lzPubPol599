@@ -2,11 +2,7 @@
 title: "PubPol 599 Homework - R"
 author: "Liyuan Zhang"
 date: "2/1/2017"
-output: 
-  html_document:
-    theme: flatly
-    toc: true
-    toc_float: true
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
