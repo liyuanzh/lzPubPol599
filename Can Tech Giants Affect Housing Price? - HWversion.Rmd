@@ -1,0 +1,1172 @@
+---
+title: "Can Tech Giants Affect Residential House Sale Price?"
+author: "Liyuan Zhang"
+date: "2/26/2017"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<br>
+
+***
+
+## THE OUTLINE
+<br>
+People have been complaining about the rising house price in Seattle and some attribute that to the rapid growth of the tech industry. In this report, I will use the officially recorded house sale panel data from King County to explore whether this holds true. 
+
+To check whether people are complaining based on truth or just personal perceptions, I have derived two questions to be answered:
+
+
+1. In which King County district and in which year, has there been an exceptionally large jump in residential house sale price or residential house sale volume?
+
+2. Is there a valid causal relationship to confidently attribute the jump to the growth of tech industry?
+
+
+In this mid-review report, I will only finish with a comparison of the sale volume and median sale price of 39 King County Districts.
+
+The core varaibles I need for the this question are: residential house sale price, the sale volume within a period, the time when the sale occured, and the location of the house saled. 
+
+
+I downloaded the dataset from the [King County Department of Assessment] (http://info.kingcounty.gov/assessor/DataDownload/default.aspx) on Jan. 31st, 2017, which was updated on Jan. 27th, 2017. The King County Department of Assessment keeps records of all King County real property from 1992 and the data is updated regularly.
+<br>
+
+There are around 30 datasets describing different attributes of a real property unit with a data description file on the government website. Due to time limit, I examined only *three* most relevant datasets and conducted an explanatory analysis of the residential house sale price from 1992 to 2016 across 39 districts within King County. The three datasets are: sale records, real property account, and parcel info.
+
+*Note: Parcel info is a 10-digit list of numbers to identiy real property unit for the purpose of property tax.*
+
+***
+
+## I - A Glimpse of the Data
+Building on the assumption that within each cluster the residential house unit is the same, I can ignore all other features of the house unit and safely keep only two types of grouping variables: the time the house was sold, and the location of the house sold. The other variables that could be of use are sale price, and an ID variable.
+
+Keeping that in mind, I glimpsed through the data description files on King County website, and selected the three datasets containing the information I need:
+
+[Description of All Variables - Sale Records] (https://www.dropbox.com/s/4afucz8x8plsk41/EXTR_RPSale.csv?dl=0)
+[Description of All Variables - Real Property] Account (https://www.dropbox.com/s/j68gkrvnrplut0p/EXTR_RPAcct_NoName.csv?dl=0)
+[Description of All Variables - Parcel Info] (https://www.dropbox.com/s/k2evob8a61mruom/EXTR_Parcel.csv?dl=0)
+
+
+For ease of understanding, I organized the variables used in this report into the table below:
+
+[WILL CREATE A VARIABLE DESCRIPTION TABLE LATER]
+
+The tables reveals that "Major" and "Minor" appear in all three datasets and can serve as the key column while joining the three datasets together. To be more clean and organized, I will create a single ID column to combine "Major" and "Minor" together after importing the data.
+
+### I-1  Import the Three Datasets
+The datasets are too large to read from url directly. You can use the links below to download the datasets to your local path:
+
+[Sale Records: EXTR_RPSale.csv](https://www.dropbox.com/s/4afucz8x8plsk41/EXTR_RPSale.csv?dl=0)
+
+[Real Property Account: EXTR_RPAcct_NoName.csv](https://www.dropbox.com/s/j68gkrvnrplut0p/EXTR_RPAcct_NoName.csv?dl=0)
+
+[Parcel Info: EXTR_Parcel.csv](https://www.dropbox.com/s/k2evob8a61mruom/EXTR_Parcel.csv?dl=0)
+
+```{r I-1import, eval=FALSE}
+# Set working directory to the folder where you saved data files
+setwd("Path to Data Files")
+
+# Use the "data.table" package to deal with large datasets and read data
+library(data.table)
+sale.raw    <- fread("EXTR_RPSale.csv", stringsAsFactors = FALSE)
+account.raw <- fread("EXTR_RPAcct_NoName.csv", stringsAsFactors = FALSE)
+parcel.raw  <- fread("EXTR_Parcel.csv", stringsAsFactors = FALSE)
+```
+
+```{r I-1import2, echo = FALSE, results='hide'}
+library(data.table)
+setwd("~/Dropbox/DataFiles")
+sale.raw    <- fread("EXTR_RPSale.csv", stringsAsFactors = FALSE)
+account.raw <- fread("EXTR_RPAcct_NoName.csv", stringsAsFactors = FALSE)
+parcel.raw  <- fread("EXTR_Parcel.csv", stringsAsFactors = FALSE)
+```
+
+```{r I-1import3, results='hide'}
+# Create a "parcelID" column as the key for merge
+sale.raw[, parcelID := paste0(Major, Minor)]
+account.raw[, parcelID := paste0(Major, Minor)]
+parcel.raw[, parcelID := paste0(Major, Minor)]
+```
+
+### I-2  Understand Sale Record
+```{r I-2sale, results='markup'}
+# make a copy of the dataset
+sale <- sale.raw
+
+# check the column variables
+names(sale)
+
+# keep only columns of interest
+sale <- sale[,.(parcelID, DocumentDate, SalePrice, PrincipalUse)]
+
+# take a look at the beginning and ending of sale data
+head(sale)
+tail(sale)
+```
+
+After having an initial look at the data, three things caught my attention:
+
+1. Data Type Convertion: The class of cloumn DocumentDate should be coverted to "Date", and column SalePrice to "numeric".
+
+2. Sale Price of Zero: This could be a oncern as zero sale price could skew the sale price distribution. I will address how I deal with zero sale price later.
+
+3. Principle Use: From the variable description table in the outline, we know that 6 represents houses mainly for "residential" use, which is a good segmentation for analysis. I will use this segmentation for the analysis in this report.
+
+*Note: principle use is self-reported, collected from the submitted Tax Affidavit Form.*
+
+```{r I-2sale2}
+# convert SalePrice to "numeric"
+sale$SalePrice <- as.numeric(sale$SalePrice)
+
+# get a subset of residential housing data
+sale <- sale[PrincipalUse == 6]
+
+# have a look at how DocumentDate is formatted
+sale$DocumentDate[1]
+# convert DocumentDate to "Date" and assign it to a new column SaleDate
+sale[, SaleDate := as.Date(sale$DocumentDate, format = "%m/%d/%Y")]
+```
+
+Next, I will trim SaleDate to Year and Year-Month, which will be used for time-series decomposition (to remove the time trend) later.
+```{r I-2sale3, results='hide'}
+# extract year
+library(lubridate)
+sale[, SaleYear := lubridate::year(sale$SaleDate)]
+
+# extract year plus month
+sale[, SaleMonthYear := format(SaleDate, "%Y-%m")]
+```
+
+```{r, results='markup'}
+# examine the resultfs
+head(sale[,.(SaleYear,SaleMonthYear,SaleDate)])
+```
+
+I am curious about how many transactions happened in each year/month during the recorded period, so I counted the number of sale records and plotted it.
+
+```{r}
+# get the number of records each year
+saleVolumeByYr <- sale[, .(SaleVolume = .N), by = SaleYear][order(SaleYear)]
+
+# check the year range
+range(saleVolumeByYr$SaleYear)
+
+# plot the sale volume by year
+plot(saleVolumeByYr, type = "o")
+```
+
+The plot shows a clear cut-off: the left part has an annual sale volume less than 20,000, while the righ part exceeds 40,000. The last year in the plot is 2017, which contains only records of the first month. The sudden change happens between 1990 and 1998. Let us take a look at the data and find out the cut-off year.
+
+```{r, results='markup'}
+saleVolumeByYr[SaleYear > 1990 & SaleYear < 1998]
+```
+
+The table shows that the annual sale volume has jumped abrutly and kept high after 1994. This is kind of consistent with the message from the King County Recorder's website[INSERT LINK], saying that only records after August 1991 are available online. I will ignore the dip in 1993 for now and further subset the dataset to include only records from 1994 to 2016.
+
+```{r}
+sale <- sale[SaleYear >= 1994 & SaleYear <= 2016]
+```
+
+I find that there are multiple sale records for one parcelID unit in a single day. I don't have a good theoretical explanation for this, but will collapse multiple records into one and use either the average or median daily sale price as the sale price indicator.
+
+```{r, results='hide'}
+# group by parcelID/SaleDate, and get the count/median for each group
+sale[, N.IdDate := .N, by = .(parcelID, SaleDate)]
+sale[, AvgPrice.Day := mean(SalePrice), by = .(parcelID, SaleDate)]
+sale[, MedianPrice.Day := median(SalePrice), by = .(parcelID, SaleDate)]
+```
+
+The results below indicate that the average price does a better job in representing the sale price on a certain day, as it can mitigate the zero sale price bias.
+
+```{r}
+head(sale[,.(parcelID, SaleDate, N.IdDate, SalePrice, AvgPrice.Day, MedianPrice.Day)][N.IdDate>2][order(parcelID)], 20)
+```
+
+Have a look at the current set of "sale" data and futher trim the column variables.
+
+```{r}
+head(sale)
+```
+
+I decide to delete two more columns: DocumentDate, PrincipalUse, MedianPrice.Day, N.IdDate, and SalePrice. The initial processing of "sale" is pretty done for the moment.
+
+```{r, results='hide'}
+sale[, c("DocumentDate", "PrincipalUse", "MedianPrice.Day", "SalePrice") := NULL]
+```
+
+Now we can get the unique values of the "sale" table [replace "dataset" with "table"], that is, one parcelID unit with one sale price on a single day.
+
+```{r}
+sale <- unique(sale)
+```
+
+
+### I-3  Understand Real Property Account
+
+```{r I-3acct, results='markup'}
+# make a copy of the dataset
+account <- account.raw
+
+# check the column variables
+names(account)
+
+# keep only columns of interest
+account <- account[,.(parcelID, CityState, ZipCode)]
+
+# take a look at the beginning and ending of sale data
+head(account)
+tail(account)
+```
+
+CityState provides valuable geospatial information and provides hints on how to process the data:
+
+1. It is possible to extract "city" and "state" information separately.
+
+2. As I am only interested in King County residential house sale price, I will keep only those in the Washington states.
+
+3. Zip code provides supplemental information if the CityState column is missing.
+
+I will deal with CityState in the merge section later.
+
+### I-4  Understand Parcel Info
+
+```{r I-4parcel, results='markup'}
+# make a copy of the dataset
+parcel <- parcel.raw
+
+# check the column variables
+names(parcel)
+
+# keep only columns of interest
+parcel <- parcel[,.(parcelID, DistrictName, PropType)]
+
+# take a look at the beginning and ending of sale data
+head(parcel)
+tail(parcel)
+```
+
+The head and tail of "parcel" reveals two piece of information:
+
+1. District Name: King county is not a parallel region with Seattle/Sammamish, which requires recoding based other geospatial info. Luckily, in the "account" dataset, we have cleaned city/state/zip code info, which could be used for recoding King County into their respective districts.
+
+2. PropType: According to the variable table in the outline section, "R" means "residential". As the "PrincipleUse" column in "sale" dataset is self-identified, we could get a more accurate segmentation of residential houses by selecting the overlapping part of PrincipleUse - "residential" and PropType - "residential".
+
+```{r}
+# get a subset of residential housing data
+parcel <- parcel[PropType == "R"]
+
+# remove the PropType column
+parcel <- parcel[, -3]
+```
+
+
+## II - Merge Data and Keep Variables of Interest
+
+Before joining the three tables, it is safer to check whether each parcel ID identifies a unique unit. If not, it is necessary to go back to check the raw data and figure out what caused the duplicate IDs.
+
+### II-1  Check the Uniqueness of ParcelID
+
+```{r, results='hide'}
+# write a function to check whether parcelID is unique
+checkIDunique <- function(dt){
+  check <- dim(dt)[1] == length(unique(dt$parcelID))
+  print(check)
+}
+
+checkIDunique(parcel) # TRUE
+checkIDunique(account) # FALSE
+checkIDunique(sale) # FALSE
+```
+
+As shown, only the "parcel" table has a unique parcelID, which means one parcelID belongs to only one record in this table. The "parcel" table is ready to be joined with the other two. As the "sale" table has already been trimmed to the cleanest form I can, with only one record of one parcelID on a single day, I will try to understand why multiple records of one parcelID exists in the "account" table.
+
+The long R-section below will show my strategy of cleaning "account" to a table with unique parcelID.
+
+```{r, message=FALSE}
+acct.check <- account.raw
+acct.check[, IDn := .N, by = parcelID] # 700261
+head(acct.check[IDn > 1][order(parcelID)], 20)
+  # many of the records have the same citystate/zip info
+
+# As I am only interested in getting geo info, I will keep only
+# columns related to that.
+acct.check.sel <- acct.check[, .(parcelID, IDn, CityState, ZipCode)]
+
+# get a unique group after unifying the CityState format
+library(tm)
+acct.check.sel$CityState <- stripWhitespace(acct.check.sel$CityState)
+acct.check.sel$CityState <- toupper(acct.check.sel$CityState)
+
+acct.check.sel <- unique(acct.check.sel)
+
+dim(acct.check.sel)[1] # 698487
+length(unique(acct.check.sel$parcelID)) # 697729
+  # this is still not a uniqueID dataset, but very close
+
+# split into two tables:
+  # One with duplicate parcelIDs
+  # The other with unique parcelIDs
+acct.dupid <- acct.check.sel[acct.check.sel$IDn > 1] # 3286
+acct.unique <- acct.check.sel[acct.check.sel$IDn == 1] # 695201
+
+# check out why parcelID differes in acct.dupid
+# group by citystate & parcelID
+acct.dupid[, N.city := .N, by = .(parcelID, CityState)]
+# group by zipcode & parcelID
+acct.dupid[, N.zip := .N, by = .(parcelID, ZipCode)]
+
+# check out those not eauql in N.city and N.zip
+sum(with(acct.dupid, N.city != N.zip)) # 1112
+# 1) N.city < N.zip
+acct.dupid1 <- acct.dupid[N.city < N.zip] # 30 records
+acct.dupid1 <- acct.dupid1[order(parcelID)][order(N.zip)]
+acct.dupid1
+  # Note: These are near the border of two districts (as they share the same
+  # zip code), could be potentially used to measure treatment effect
+  # of policy implemented by ditrict
+  
+# check whether the DistrictName column from "parcel" can provide info
+parcel.acct.dupid1 <- parcel[parcel$parcelID %in% acct.dupid1$parcelID]
+merge(parcel.acct.dupid1, acct.dupid1)
+
+# the first row is obviously a typo, change it manually
+acct.dupid1[parcelID == "3223039205"]$CityState <- "VASHON WA"
+
+# row three and four show a conflict. I will trust the DistrictName from # "parcel", as this is the government registered info while CityState is
+# self-reported and prone to mistakes.
+
+# Double check form the King County Assessment eRealProperty account
+# also proves this
+# http://blue.kingcounty.com/Assessor/eRealProperty/default.aspx
+
+# correct the typo:
+acct.dupid1[parcelID == "3521049042"]$CityState <- "MILTON WA"
+
+# for the rest, change the CityState according to the DistrictName
+# adopted in the "parcel" table
+acct.dupid1[parcelID == "3826000843"]$CityState <- "BURIEN WA" 
+acct.dupid1[parcelID == "4197400050"]$CityState <- "BURIEN WA" 
+acct.dupid1[parcelID == "7304301150"]$CityState <- "SHORELINE WA"
+
+# keep only records in "parcel" table
+acct.dupid1.overlap <- acct.dupid1[acct.dupid1$parcelID %in% 
+                                     parcel.acct.dupid1$parcelID]
+acct.dupid1.unique <- unique(acct.dupid1.overlap)
+
+# check to make sure the uniqueness
+checkIDunique(acct.dupid1.unique)
+
+# 2) N.city > N.zip
+acct.dupid2 <- acct.dupid[N.city > N.zip] # 1082
+acct.dupid2 <- acct.dupid2[order(parcelID)][order(N.city)]
+head(acct.dupid2, 20)
+table(acct.dupid2$N.city) # 2: 1082
+length(unique(acct.dupid2$parcelID)) # 541 = 1082/2
+
+# As the geographical classification by city is more directly related to my question,
+# I will abandon the ZipCode column and remove duplicates:
+acct.dupid2 <- acct.dupid2[, -4]
+acct.dupid2.unique <- unique(acct.dupid2)
+
+# stack the three unique parts together to get an "account" table
+# with ParcelID to serve as the primary key
+
+checkIDunique(acct.unique)
+checkIDunique(acct.dupid1.unique)
+checkIDunique(acct.dupid2.unique)
+
+# all the three tables have a unique ID, time to combine now
+acct.unique.complete <- rbind(acct.unique[,.(parcelID, CityState)],
+                              acct.dupid1.unique[,.(parcelID, CityState)],
+                              acct.dupid2.unique[,.(parcelID, CityState)])
+
+checkIDunique(acct.unique.complete)
+```
+
+### II-2  Merge "parcel" and "account"
+
+```{r}
+# make a copy of the unique "account" table
+account.unique <- acct.unique.complete
+```
+
+```{r}
+# inner join of the "parcel" and "account" table
+setkey(parcel, parcelID)
+setkey(account.unique, parcelID)
+par.acct <- parcel[account.unique, nomatch = 0]
+```
+
+The first thing that catches my attention is again the variance between `DistrictName` and `CityState`. I will still use `DistrictName` as a more reliable region info, and reference `CityState` to replace King County with the extracted "city" from `CityState`.
+
+Before that, I will double check whether `DistrictName` is well organized. 
+
+```{r}
+dist.tb <- par.acct[, .(N = .N), by = DistrictName][order(-N)]
+dist.tb
+```
+
+The table is clean. It is comfortable to use `DistrictName` this as the primary source of city. Let's move on to clean `CityState` and extract "city" info.
+
+```{r}
+# get a subset of King County records
+geo.kc <- par.acct[DistrictName == "KING COUNTY"]
+
+# get a frequency table of CityState
+geo.kc$CityState <- tolower(geo.kc$CityState)
+library(stringr)
+geo.kc$CityState <- str_trim(geo.kc$CityState) # remove leading & trailing whitespace
+geo.kc$CityState <- stripWhitespace(geo.kc$CityState) # remove extra whitespace
+
+city.tb <- geo.kc[, .N, by = CityState][order(N)]
+head(city.tb, 50)
+tail(city.tb, 50)
+
+# check CityState not ending with " wa"
+notwa <- geo.kc[!grepl(".*\\swa", geo.kc$CityState)]
+city.tb.notwa <- notwa[, .N, by = CityState][order(N)]
+head(city.tb.notwa, 30)
+tail(city.tb.notwa, 30)
+```
+
+It seems that ther are some irregular patterns. Let's check out these to make sure no wa cities are left.
+```{r}
+# check the irregular records
+irr.city <- notwa[!grepl(".*\\s[a-z][a-z]", notwa$CityState)]
+city.tb.irr <- irr.city[, .N, by = CityState]
+city.tb.irr
+```
+
+There are less than 10 wa cities in irregular patterns, I will ignore them as they take a very small portion while cleaning them can require lots of efforts.
+
+```{r, eval = FALSE}
+# Get two subsets of geo.kc containing wa cities
+# 1) regular wa cities
+geo.kc.wa <- geo.kc[grepl(".*\\swa", geo.kc$CityState)]
+# 2) irrgular pattern: wa cities
+  # decide to ignore this part for now
+  # It takes a small portion while cleaning it can require lots of efforts.
+  # portion: 6/96964
+irr.wa.cities <- c("renton w", "sammamish", "enumclaw", "woodinville", "covingtonwa", "redmondwa")
+geo.kc.wa.irr <- geo.kc[geo.kc$CityState %in% irr.wa.cities]
+
+ls.irr.cities <- list(
+  "renton w" = "renton wa", 
+  "sammamish" = "sammamish wa", 
+  "enumclaw" = "enumclaw wa", 
+  "woodinville" = "woodinville wa", 
+  "covingtonwa" = "covington wa", 
+  "redmondwa" = "redmond wa")
+
+ls.wa.dist.clean <- lapply(wa.kc.sel.sale$extr.city, function(name){ls.dist.recode[[name]]})
+wa.dist.clean <- unlist((ls.wa.dist.clean), use.names = FALSE)
+wa.kc.sel.sale$recoded.dist <- wa.dist.clean
+```
+
+Time to extract city info from `geo.kc.wa` subset:
+```{r}
+# get a subset of geo.kc containing wa cities
+geo.kc.wa <- geo.kc[grepl(".*\\swa", geo.kc$CityState)]
+
+# extract cities and add a column to the wa-city subset
+wa.extr.city <- gsub("\\s+wa", "", geo.kc.wa$CityState)
+geo.kc.wa$extrCity <- wa.extr.city
+```
+
+```{r}
+# extracted cities
+wa.extr.city.tb <- geo.kc.wa[, .N, by = extrCity][order(-N)]
+
+# get the DistrictName values and save to csv
+write.csv(dist.tb, "disttb.csv")
+
+# get the extracted city values and save to csv
+write.csv(wa.extr.city.tb, "extrcities.csv")
+```
+
+I did some value pairing in Excel and saved the pairs in a list:
+```{r, echo = FALSE}
+ls.dist.recode <- list(
+  "98042" = "kent",
+  "aberdeen" = "outKC",
+  "adna" = "outKC",
+  "algona" = "algona",
+  "allyn" = "outKC",
+  "ames lake" = "outKC",
+  "anacortes" = "outKC",
+  "anderson island" = "outKC",
+  "arlington" = "outKC",
+  "aubrun" = "auburn",
+  "aubun" = "auburn",
+  "auburn" = "auburn",
+  "auburn." = "auburn",
+  "auburnb" = "auburn",
+  "auburnsh" = "auburn",
+  "aunurn" = "auburn",
+  "auurn" = "auburn",
+  "bainbridge" = "outKC",
+  "bainbridge isla" = "outKC",
+  "bainbridge island" = "outKC",
+  "baring" = "outKC",
+  "battle ground" = "outKC",
+  "battleground" = "outKC",
+  "beaux arts" = "outKC",
+  "beaver" = "outKC",
+  "belelvue" = "bellevue",
+  "belevue" = "bellevue",
+  "belfair" = "bellevue",
+  "belleuve" = "bellevue",
+  "bellevu" = "bellevue",
+  "bellevue" = "bellevue",
+  "bellingham" = "outKC",
+  "belllevue" = "bellevue",
+  "bellvue" = "bellevue",
+  "beverly" = "outKC",
+  "black diamond" = "black diamond",
+  "black dimaond" = "black diamond",
+  "blaine" = "outKC",
+  "blk diamond" = "black diamond",
+  "bonney lake" = "outKC",
+  "bonneylake" = "outKC",
+  "bothell" = "bothell",
+  "bow" = "outKC",
+  "bremerton" = "outKC",
+  "brewster" = "outKC",
+  "brier" = "outKC",
+  "buckley" = "outKC",
+  "bucoda" = "outKC",
+  "burbank" = "outKC",
+  "burien" = "burien",
+  "burley" = "outKC",
+  "burlington" = "outKC",
+  "burton" = "outKC",
+  "camano island" = "outKC",
+  "camas" = "outKC",
+  "caranation" = "carnation",
+  "carbonado" = "outKC",
+  "carhation" = "carnation",
+  "carington" = "outKC",
+  "carnartion" = "carnation",
+  "carnation" = "carnation",
+  "carnation," = "carnation",
+  "carnationa" = "carnation",
+  "carnaton" = "carnation",
+  "carniation" = "carnation",
+  "cashmere" = "outKC",
+  "castle rock" = "outKC",
+  "cathlamet" = "outKC",
+  "centerville" = "outKC",
+  "central" = "outKC",
+  "centralia" = "outKC",
+  "chehalis" = "outKC",
+  "chelan" = "outKC",
+  "chewelah" = "outKC",
+  "clallam bay" = "outKC",
+  "clarkston" = "outKC",
+  "cle elum" = "outKC",
+  "clinton" = "outKC",
+  "clyde hill" = "clyde hill",
+  "colfax" = "outKC",
+  "colville" = "outKC",
+  "conconally" = "outKC",
+  "concrete" = "outKC",
+  "coopeville" = "outKC",
+  "copalis beach" = "outKC",
+  "cornation" = "outKC",
+  "cosmopolis" = "outKC",
+  "coupeville" = "outKC",
+  "coupville" = "outKC",
+  "covington" = "covington",
+  "covington,." = "outKC",
+  "darrington" = "outKC",
+  "deer harbor" = "outKC",
+  "deer park" = "outKC",
+  "des moine" = "des moines",
+  "des moines" = "des moines",
+  "dese moines" = "des moines",
+  "desmoines" = "des moines",
+  "dockton" = "outKC",
+  "dupont" = "outKC",
+  "duval" = "duvall",
+  "duvall" = "duvall",
+  "duvallwa" = "duvall",
+  "e wenatchee" = "outKC",
+  "east olympia" = "outKC",
+  "east weatchee" = "outKC",
+  "east wenatchee" = "outKC",
+  "easton" = "outKC",
+  "eastsound" = "outKC",
+  "eatonville" = "outKC",
+  "eatowville" = "outKC",
+  "edgewood" = "outKC",
+  "edmond" = "outKC",
+  "edmonds" = "outKC",
+  "electric city" = "outKC",
+  "elk" = "outKC",
+  "ellensburg" = "outKC",
+  "ellensbury" = "outKC",
+  "elma" = "outKC",
+  "emumclaw" = "outKC",
+  "encumclaw" = "outKC",
+  "entiat" = "outKC",
+  "enuclaw" = "enumclaw",
+  "enucmclaw" = "enumclaw",
+  "enumcalw" = "enumclaw",
+  "enumcl,aw" = "enumclaw",
+  "enumclaw" = "enumclaw",
+  "enumclaw," = "enumclaw",
+  "enumclw" = "enumclaw",
+  "enumcraw" = "enumclaw",
+  "enumelaw" = "enumclaw",
+  "enumnclaw" = "enumclaw",
+  "enunclaw" = "enumclaw",
+  "ephrata" = "outKC",
+  "eunumclaw" = "enumclaw",
+  "everett" = "outKC",
+  "everson" = "outKC",
+  "fairwood" = "outKC",
+  "fall city" = "outKC",
+  "fall city fall" = "outKC",
+  "fall city," = "outKC",
+  "fallcity" = "outKC",
+  "fed" = "outKC",
+  "fedearl" = "outKC",
+  "fedeeral" = "outKC",
+  "federaly" = "outKC",
+  "ferndale" = "outKC",
+  "fife" = "outKC",
+  "fircrest" = "outKC",
+  "forks" = "outKC",
+  "fountain valley" = "outKC",
+  "fox island" = "outKC",
+  "freeland" = "outKC",
+  "friday harbor" = "outKC",
+  "ftyne in" = "outKC",
+  "gig harbor" = "outKC",
+  "gold" = "outKC",
+  "gold bar" = "outKC",
+  "goldbar" = "outKC",
+  "graceville" = "outKC",
+  "graham" = "outKC",
+  "granite falls" = "outKC",
+  "grapeview" = "outKC",
+  "grayland" = "outKC",
+  "greenbank" = "outKC",
+  "greenwater" = "outKC",
+  "grotto" = "outKC",
+  "hansville" = "outKC",
+  "hartline" = "outKC",
+  "hoabart" = "outKC",
+  "hobart" = "outKC",
+  "hobert" = "outKC",
+  "hoodsport" = "outKC",
+  "hoquiam" = "outKC",
+  "ilwaco" = "outKC",
+  "inchelium" = "outKC",
+  "index" = "outKC",
+  "indianola" = "outKC",
+  "inex" = "outKC",
+  "isaquah" = "issaquah",
+  "issalquah" = "issaquah",
+  "issaquach" = "issaquah",
+  "issaquah" = "issaquah",
+  "issaquah,." = "issaquah",
+  "issaquaha" = "issaquah",
+  "issaquh" = "issaquah",
+  "issaquha" = "issaquah",
+  "issaquuah" = "issaquah",
+  "issaqyah" = "issaquah",
+  "issauqah" = "issaquah",
+  "issauqh a" = "issaquah",
+  "issauqha" = "issaquah",
+  "issauquah" = "issaquah",
+  "issawuah" = "issaquah",
+  "issquah" = "issaquah",
+  "isssaquah" = "issaquah",
+  "joyce" = "outKC",
+  "kelso" = "outKC",
+  "ken" = "outKC",
+  "kenmore" = "kenmore",
+  "kennewcik" = "outKC",
+  "kennewick" = "outKC",
+  "kent" = "kent",
+  "kent a" = "kent",
+  "kent," = "kent",
+  "kent`" = "kent",
+  "kentsh" = "outKC",
+  "kettle falls" = "outKC",
+  "kingston" = "outKC",
+  "kirkland" = "kirkland",
+  "kirland" = "kirkland",
+  "kmaple valley" = "outKC",
+  "la conner" = "outKC",
+  "lacey" = "outKC",
+  "laconner" = "outKC",
+  "lake forest park" = "lake forest park",
+  "lake stevens" = "outKC",
+  "lake tapps" = "outKC",
+  "lake tappsa" = "outKC",
+  "lakebay" = "outKC",
+  "lakewood" = "outKC",
+  "langley" = "outKC",
+  "leavenworth" = "outKC",
+  "lilliwaup" = "outKC",
+  "littlerock" = "outKC",
+  "long beach" = "outKC",
+  "longbranch" = "outKC",
+  "longview" = "outKC",
+  "lopez" = "outKC",
+  "lopez island" = "outKC",
+  "los alamos" = "outKC",
+  "lyman" = "outKC",
+  "lynden" = "outKC",
+  "lynnwood" = "outKC",
+  "manchester" = "outKC",
+  "manson" = "outKC",
+  "maple" = "maple valley",
+  "maple falls" = "maple valley",
+  "maple valey" = "maple valley",
+  "maple valle" = "maple valley",
+  "maple valleu" = "maple valley",
+  "maple valley" = "maple valley",
+  "maple vallley" = "maple valley",
+  "maple vallwy" = "maple valley",
+  "maple vally" = "maple valley",
+  "mapley valley" = "maple valley",
+  "maplr valley" = "maple valley",
+  "mapple valley" = "maple valley",
+  "maryssville" = "outKC",
+  "marysville" = "outKC",
+  "maxee" = "outKC",
+  "mazama" = "outKC",
+  "mead" = "outKC",
+  "mecer island" = "mercer island",
+  "medical lake" = "outKC",
+  "medina" = "outKC",
+  "melton" = "outKC",
+  "mercer island" = "mercer island",
+  "mesa" = "outKC",
+  "mill creek" = "outKC",
+  "millcreek" = "milton",
+  "milton" = "milton",
+  "monroe" = "outKC",
+  "montegano" = "outKC",
+  "montesano" = "outKC",
+  "morton" = "outKC",
+  "moses lake" = "outKC",
+  "mossyrock" = "outKC",
+  "mount lake terrace" = "outKC",
+  "mount vernon" = "outKC",
+  "mount veron" = "outKC",
+  "mountlake terr" = "outKC",
+  "mountlake terrace" = "outKC",
+  "moxee" = "outKC",
+  "mt lake terrace" = "outKC",
+  "mt terrace" = "outKC",
+  "mt vernon" = "outKC",
+  "mukilteo" = "outKC",
+  "naches" = "outKC",
+  "napavine" = "outKC",
+  "naselle" = "outKC",
+  "new castle" = "newcastle",
+  "newcastle" = "newcastle",
+  "newport" = "outKC",
+  "newxcastle" = "newcastle",
+  "nine mile falls" = "outKC",
+  "nooksack" = "outKC",
+  "nordland" = "outKC",
+  "norht bend" = "north bend",
+  "normady park" = "outKC",
+  "normanday park" = "normandy park",
+  "normandy park" = "normandy park",
+  "normansy park" = "outKC",
+  "north band" = "north bend",
+  "north bend" = "north bend",
+  "north bend." = "north bend",
+  "north bendf" = "north bend",
+  "north lakewood" = "outKC",
+  "northbend" = "north bend",
+  "nton" = "outKC",
+  "oak harbor" = "outKC",
+  "oakville" = "outKC",
+  "ocean shores" = "outKC",
+  "olalla" = "outKC",
+  "olympia" = "outKC",
+  "olypia" = "outKC",
+  "omaha" = "outKC",
+  "omak" = "outKC",
+  "onalaska" = "outKC",
+  "orient" = "outKC",
+  "orondo" = "outKC",
+  "oroville" = "outKC",
+  "orting" = "outKC",
+  "othello" = "outKC",
+  "otis orchards" = "outKC",
+  "pacific" = "pacific",
+  "packwood" = "outKC",
+  "palmer" = "outKC",
+  "palmier" = "outKC",
+  "pasco" = "outKC",
+  "pateros" = "outKC",
+  "pe ell" = "outKC",
+  "perston" = "outKC",
+  "port angeles" = "outKC",
+  "port ludlow" = "outKC",
+  "port orchard" = "outKC",
+  "port townsend" = "outKC",
+  "poulsbo" = "outKC",
+  "prescott" = "outKC",
+  "preston" = "outKC",
+  "prosser" = "outKC",
+  "pt hadlock" = "outKC",
+  "pt roberts" = "outKC",
+  "pullman" = "outKC",
+  "puyallup" = "outKC",
+  "puyullap" = "outKC",
+  "quincy" = "outKC",
+  "rainier" = "outKC",
+  "randle" = "outKC",
+  "ravansdale" = "outKC",
+  "ravenasdale" = "outKC",
+  "ravendale" = "outKC",
+  "ravendsale" = "outKC",
+  "ravensadle" = "outKC",
+  "ravensdale" = "outKC",
+  "ravensdale," = "outKC",
+  "ravesdale" = "outKC",
+  "ravesndale" = "outKC",
+  "reavendale" = "outKC",
+  "reavensdale" = "outKC",
+  "redemond" = "redmond",
+  "redmiond" = "redmond",
+  "redmomd" = "redmond",
+  "redmon" = "redmond",
+  "redmond" = "redmond",
+  "redmond," = "redmond",
+  "redmond, wn." = "redmond",
+  "redmonds" = "redmond",
+  "redmpnd" = "redmond",
+  "remond" = "redmond",
+  "renotn" = "renton",
+  "rent0n" = "renton",
+  "rentn" = "renton",
+  "renton" = "renton",
+  "renton," = "renton",
+  "rentonsh" = "renton",
+  "republic" = "outKC",
+  "revensdale" = "outKC",
+  "rice" = "outKC",
+  "richland" = "outKC",
+  "richmond" = "outKC",
+  "ridgefield" = "outKC",
+  "ritzville" = "outKC",
+  "riverside" = "outKC",
+  "rn" = "outKC",
+  "rneton" = "renton",
+  "roche harbor" = "outKC",
+  "rochester" = "outKC",
+  "rockford" = "outKC",
+  "rollingbay" = "outKC",
+  "rollingway" = "outKC",
+  "ronald" = "outKC",
+  "roslyn" = "outKC",
+  "rosyln" = "outKC",
+  "roy" = "outKC",
+  "roy," = "outKC",
+  "royal city" = "outKC",
+  "rredmond" = "redmond",
+  "rrenton" = "outKC",
+  "ruston" = "outKC",
+  "rvensdale" = "outKC",
+  "s colby" = "outKC",
+  "saeattle" = "seattle",
+  "samammish" = "sammamish",
+  "sammamish" = "sammamish",
+  "santa clara" = "outKC",
+  "scottsdale" = "outKC",
+  "sea tac" = "outKC",
+  "seabeck" = "outKC",
+  "seahurst" = "outKC",
+  "seatac" = "seatac",
+  "seatle" = "seattle",
+  "seatlle" = "seattle",
+  "seatt;e" = "seattle",
+  "seatte" = "seattle",
+  "seattel" = "seattle",
+  "seattl" = "seattle",
+  "seattle" = "seattle",
+  "seattle a" = "seattle",
+  "seattle," = "seattle",
+  "seattle3" = "seattle",
+  "seattlea" = "seattle",
+  "seattlee" = "seattle",
+  "seattlesh" = "seattle",
+  "seattleshington" = "seattle",
+  "seattlt" = "seattle",
+  "seatttle" = "seattle",
+  "seaview" = "outKC",
+  "sedro wooley" = "outKC",
+  "sedro woolley" = "outKC",
+  "seissaquah" = "outKC",
+  "selah" = "outKC",
+  "sequim" = "outKC",
+  "seven bays" = "outKC",
+  "shelton" = "outKC",
+  "shoreline" = "shoreline",
+  "shorline" = "shoreline",
+  "silver creek" = "outKC",
+  "silverdale" = "outKC",
+  "skamania" = "outKC",
+  "skyhomish" = "skykomish",
+  "skykomish" = "skykomish",
+  "skyomish" = "skykomish",
+  "snohomish" = "outKC",
+  "snoqualamie" = "snoqualmie",
+  "snoqualime" = "snoqualmie",
+  "snoqualmia" = "snoqualmie",
+  "snoqualmie" = "snoqualmie",
+  "snoqualmie falls" = "snoqualmie",
+  "snoqualmie pass" = "snoqualmie",
+  "snoqulamie" = "snoqualmie",
+  "snsoqualmie" = "snoqualmie",
+  "soap lake" = "outKC",
+  "soqualmie" = "snoqualmie",
+  "south cle elum" = "outKC",
+  "south prairie" = "outKC",
+  "south prarie" = "outKC",
+  "southworth" = "outKC",
+  "spanaway" = "outKC",
+  "spokane" = "outKC",
+  "spokane valley" = "outKC",
+  "stanwood" = "outKC",
+  "startup" = "outKC",
+  "steilacoom" = "outKC",
+  "stillwater" = "outKC",
+  "sultan" = "outKC",
+  "sumas" = "outKC",
+  "sumn" = "outKC",
+  "sumner" = "outKC",
+  "sunnyside" = "outKC",
+  "suquamish" = "outKC",
+  "suvall" = "outKC",
+  "tacamoa" = "seatac",
+  "tacoma" = "seatac",
+  "tahuya" = "outKC",
+  "tenino" = "outKC",
+  "thornton" = "outKC",
+  "thorp" = "outKC",
+  "tokeland" = "outKC",
+  "tonasket" = "outKC",
+  "toutle" = "outKC",
+  "trout lake" = "outKC",
+  "tukwila" = "tukwila",
+  "tumwater" = "outKC",
+  "twisp" = "outKC",
+  "union" = "outKC",
+  "union gap" = "outKC",
+  "university plac" = "outKC",
+  "university place" = "outKC",
+  "valley" = "outKC",
+  "valley ford" = "outKC",
+  "vancouver" = "outKC",
+  "vantage" = "outKC",
+  "vash0n" = "outKC",
+  "vashn" = "outKC",
+  "vashon" = "outKC",
+  "vashon island" = "outKC",
+  "vashona" = "outKC",
+  "vashong" = "outKC",
+  "vashonq" = "outKC",
+  "vashonth st" = "outKC",
+  "vashow" = "outKC",
+  "vason" = "outKC",
+  "vaughn" = "outKC",
+  "veradale" = "outKC",
+  "voodinville" = "woodinville",
+  "waldron" = "outKC",
+  "walina" = "outKC",
+  "walla" = "outKC",
+  "washington" = "outKC",
+  "washon" = "outKC",
+  "wauconda" = "outKC",
+  "wauna" = "outKC",
+  "wenatchee" = "outKC",
+  "west richland" = "outKC",
+  "white salmon" = "outKC",
+  "winlock" = "outKC",
+  "winthrop" = "outKC",
+  "woddinville" = "woodinville",
+  "wodinville" = "woodinville",
+  "wood" = "woodinville",
+  "woodeinville" = "woodinville",
+  "woodenville" = "woodinville",
+  "woodinbille" = "woodinville",
+  "woodiniville" = "woodinville",
+  "woodinivlle" = "woodinville",
+  "woodinveille" = "woodinville",
+  "woodinviile" = "woodinville",
+  "woodinvile" = "woodinville",
+  "woodinvilel" = "woodinville",
+  "woodinvill" = "woodinville",
+  "woodinville" = "woodinville",
+  "woodinville 98072" = "woodinville",
+  "woodinville," = "woodinville",
+  "woodinvillesh" = "woodinville",
+  "woodinvillie" = "woodinville",
+  "woodinvillle" = "woodinville",
+  "woodinvillw" = "woodinville",
+  "woodinwille" = "woodinville",
+  "woodiville" = "woodinville",
+  "woodivnille" = "woodinville",
+  "woodniville" = "woodinville",
+  "woodnivlle" = "woodinville",
+  "woodunville" = "woodinville",
+  "woodville" = "woodinville",
+  "woodvinville" = "woodinville",
+  "woodway" = "outKC",
+  "wooinville" = "woodinville",
+  "wookinville" = "woodinville",
+  "woondiville" = "woodinville",
+  "yakima" = "outKC",
+  "yarrow point" = "yarrow point",
+  "yelm" = "outKC",
+  "zillah" = "outKC")
+```
+
+And do the cleaning:
+```{r}
+# get a list of clean city names
+ls.wa.dist.clean <- lapply(geo.kc.wa$extrCity, function(x){ls.dist.recode[[x]]})
+
+# unlist the list to a vector
+vec.wa.dist.clean <- unlist(ls.wa.dist.clean, use.names = FALSE)
+
+# assign the vector to the DistrictName column
+geo.kc.wa$DistrictName <- vec.wa.dist.clean
+
+# keep only parcelID and DistrictName
+geo.kc.wa <- geo.kc.wa[, .(parcelID, DistrictName)]
+
+# select only those within kc
+geo.kc.wa.withinkc <- geo.kc.wa[DistrictName != "outKC"]
+```
+
+Combine the King County and not "king county" part together:
+```{r, results='hide'}
+# houses within King County includes the two parts:
+# 1) par.acct$DistrictName == "king county" & extracted city within King County
+geo.kc.wa.withinkc
+# 2) par.acct$DistrictName != "king county"
+geo.withinkc <- par.acct[DistrictName != "KING COUNTY"]
+geo.withinkc <- geo.withinkc[, -3]
+geo.withinkc$DistrictName <- tolower(geo.withinkc$DistrictName)
+head(geo.withinkc)
+
+# combine the two parts
+geo <- rbind(geo.kc.wa.withinkc, geo.withinkc)
+```
+
+
+### II-3  Merge All Three Tables
+
+A clean geo-info table is ready now. Let's double check the parcelID uniqueness before inner join of `geo` with `sale`:
+
+```{r}
+checkIDunique(geo)
+
+# inner join of "geo" with "sale"
+setkey(geo, parcelID)
+setkey(sale, parcelID)
+all <- sale[geo, nomatch = 0]
+
+# have a look and give better column names
+head(all)
+all <- all[, -5]
+names(all) <- c('parcelID', 'saleDate', 'saleYear', 'saleYrM', 'salePrice', 'region')
+```
+
+<br>
+
+***
+
+## III - Deeper Understanding of the Sale Price Data
+[Will fill in later]
+### III-1  Deal with Zero Sale Price
+
+
+### III-2  Time Series Processing of Non-Zero Sale Price
+
+
+<br>
+
+***
+
+## IV - Try out: Merge Regional Indicator with SP Object
+
+Get the regional indicator ready:
+```{r}
+# get a subset of non-zero sale price
+kc.nonzero <- all[salePrice != 0]
+
+# get regional indicators
+salePriceByRegion <- as.data.frame(all[, .(medianPrice = median(salePrice)), by = region])
+saleVolumeByRegion <- as.data.frame(all[, .(saleVolume = .N), by = region])
+
+# capitalize the first letter of every word in column region
+# Source: http://stackoverflow.com/questions/6364783/capitalize-the-first-letter-of-both-words-in-a-two-word-string
+simpleCap <- function(x) {
+  s <- strsplit(x, " ")[[1]]
+  paste(toupper(substring(s, 1,1)), substring(s, 2),
+      sep="", collapse=" ")
+}
+
+salePriceByRegion$region <- sapply(salePriceByRegion$region, simpleCap)
+saleVolumeByRegion$region <- sapply(saleVolumeByRegion$region, simpleCap)
+
+# edit "Seatac" manually
+salePriceByRegion$region[14] <- "SeaTac"
+saleVolumeByRegion$region[14] <- "SeaTac"
+```
+
+Get the Shapefile ready:
+```{r}
+# Download the King County Cities Shapefile to your working directory
+# should have at least four files ending with ".dbf", ".prj", ".shp", and ".shx"
+
+# Read the shapefile data into R and take a look
+library(rgdal)
+library(sp)
+
+city_kc <- readOGR("/Users/liyuanzhang/Desktop/Backup/! TheWay/DataApplication/KCGIS/KCcities","city_kc")
+
+summary(city_kc) # SpatialPolygonsDataFrame
+
+plot(city_kc)
+
+```
+
+Check out wether the CITYNAME in `city_kc` is the same as region in the sales info dataset:
+```{r}
+setdiff(city_kc@data$CITYNAME, salePriceByRegion$region)
+setdiff(salePriceByRegion$region, city_kc@data$CITYNAME)
+```
+The only difference is "King County", which makes sense, since I have replaced all "King County" with its respective city name. Let's merge the SpatialPolygonsDataFrame with the indicators:
+
+```{r}
+# merge
+salesp <- merge(city_kc, salePriceByRegion, by.x="CITYNAME", by.y="region")
+salesp <- merge(salesp, saleVolumeByRegion, by.x="CITYNAME", by.y="region")
+
+# check
+names(salesp)
+```
+
+Everything seems right. Let's test by plotting two maps:
+```{r}
+library(tmap)
+qtm(shp = salesp, fill = "medianPrice")
+qtm(shp = salesp, fill = "saleVolume")
+  # seems better to use saleVolume/population
+```
